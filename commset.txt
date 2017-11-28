@@ -1,0 +1,384 @@
+#if !defined(AFX_COMMSET_H__F3C7811E_D9D7_4D67_88F5_B86CD06AB128__INCLUDED_)
+#define AFX_COMMSET_H__F3C7811E_D9D7_4D67_88F5_B86CD06AB128__INCLUDED_
+
+#if _MSC_VER > 1000
+#pragma once
+#endif // _MSC_VER > 1000
+// CommSet.h : header file
+//
+#include "SerialPort.h"
+#include "MainFrm.h"
+/////////////////////////////////////////////////////////////////////////////
+// CCommSet dialog
+
+class CCommSet : public CDialog
+{
+// Construction
+public:
+	void WriteDataComm();
+	void ReadDataComm();
+	void WriteDataTimer();
+	void ReadDataTimer();
+	CCommSet(CWnd* pParent = NULL);   // standard constructor
+	CMainFrame *m_pMainFram;
+	CSerialPort m_SerialPort;		//串口对象
+	bool RxRWflag;					//接收串口读写标志(R-false,W-true)
+	bool TxRWflag;					//发送串口读写标志(R-false,W-true)
+	bool m_ComOpened;				//串口打开标志
+	unsigned char RxBuffer[255];	//接收缓存区
+	unsigned char TxBuffer[255];	//发送缓存区
+	int RxIndex;					//接收个数
+	int TxIndex;					//发送个数
+	CString m_ComData;				//接收字符串
+	int sendval;					//发送变量个数
+	void InitComm(void);			//初始化串口
+	void CloseComm(void);		//关闭串口
+	int CharToInt(char* data);	//字符串转数字
+	char HexChar(char c);			//字符转数字
+	unsigned int crcchk(unsigned char *data_ad,unsigned int length);//CRC校验
+	void SendReadOrder(int Address,int FunCode,char* StartAddress,int Length);//发送读指令
+	void SendWriteOrder(char* StartAddress,char* dataval);
+// Dialog Data
+	//{{AFX_DATA(CCommSet)
+	enum { IDD = IDD_COMMSET_DIALOG };
+	CString	m_baud;
+	CString	m_data;
+	CString	m_port;
+	CString	m_stop;
+	//}}AFX_DATA
+
+
+// Overrides
+	// ClassWizard generated virtual function overrides
+	//{{AFX_VIRTUAL(CCommSet)
+	protected:
+	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
+	//}}AFX_VIRTUAL
+
+// Implementation
+protected:
+
+	// Generated message map functions
+	//{{AFX_MSG(CCommSet)
+	virtual BOOL OnInitDialog();
+	afx_msg void OnTimer(UINT nIDEvent);
+	afx_msg LONG OnComm(WPARAM ch, LPARAM port);
+	virtual void OnOK();
+	//}}AFX_MSG
+	DECLARE_MESSAGE_MAP()
+};
+
+//{{AFX_INSERT_LOCATION}}
+// Microsoft Visual C++ will insert additional declarations immediately before the previous line.
+
+#endif // !defined(AFX_COMMSET_H__F3C7811E_D9D7_4D67_88F5_B86CD06AB128__INCLUDED_)
+//////////////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////////////////////////
+// CommSet.cpp : implementation file
+//
+
+#include "stdafx.h"
+#include "SatCon.h"
+#include "CommSet.h"
+
+#ifdef _DEBUG
+#define new DEBUG_NEW
+#undef THIS_FILE
+static char THIS_FILE[] = __FILE__;
+#endif
+
+/////////////////////////////////////////////////////////////////////////////
+// CCommSet dialog
+
+
+CCommSet::CCommSet(CWnd* pParent /*=NULL*/)
+	: CDialog(CCommSet::IDD, pParent)
+{
+	//{{AFX_DATA_INIT(CCommSet)
+	m_baud = _T("");
+	m_data = _T("");
+	m_port = _T("");
+	m_stop = _T("");
+	//}}AFX_DATA_INIT
+	RxIndex=0;
+	TxIndex=0;
+	sendval=0;
+	RxRWflag=FALSE;
+	TxRWflag=FALSE;
+}
+
+
+void CCommSet::DoDataExchange(CDataExchange* pDX)
+{
+	CDialog::DoDataExchange(pDX);
+	//{{AFX_DATA_MAP(CCommSet)
+	DDX_CBString(pDX, IDC_BAUD_COMBO, m_baud);
+	DDX_CBString(pDX, IDC_DATA_COMBO, m_data);
+	DDX_CBString(pDX, IDC_PORT_COMBO, m_port);
+	DDX_CBString(pDX, IDC_STOP_COMBO, m_stop);
+	//}}AFX_DATA_MAP
+}
+
+
+BEGIN_MESSAGE_MAP(CCommSet, CDialog)
+	//{{AFX_MSG_MAP(CCommSet)
+	ON_WM_TIMER()
+	ON_MESSAGE(WM_COMM_RXCHAR, OnComm)
+	//}}AFX_MSG_MAP
+END_MESSAGE_MAP()
+
+/////////////////////////////////////////////////////////////////////////////
+// CCommSet message handlers
+
+BOOL CCommSet::OnInitDialog() 
+{
+	CDialog::OnInitDialog();
+	m_pMainFram = (CMainFrame *)AfxGetApp()->m_pMainWnd;
+	// TODO: Add extra initialization here
+	m_port="1";
+	m_baud="19200";
+	m_data="8";
+	m_stop="1";
+	UpdateData(FALSE);
+//	InitComm();
+	return TRUE;  // return TRUE unless you set the focus to a control
+	              // EXCEPTION: OCX Property Pages should return FALSE
+}
+
+void CCommSet::InitComm(void)
+{
+	UpdateData(TRUE);
+	int port=atoi(m_port); int baud=atoi(m_baud); int data=atoi(m_data); int stop=atoi(m_stop);
+	
+	if (m_SerialPort.InitPort(this,port,baud,'N',data,stop,EV_RXFLAG | EV_RXCHAR,512))
+	{
+		m_SerialPort.StartMonitoring();   //启动串口监视线程
+		m_ComOpened=true;     //COM1打开
+		SetTimer(1,1,NULL);  //启动定时器，1mm后发送数据
+		
+	}
+	else  //初始化不成功，则显示提示信息
+	{
+		CString strTemp;
+		strTemp.Format("COM%d 没有发现，或被其它设备占用",1);
+		AfxMessageBox(strTemp);
+	}
+}
+void CCommSet::CloseComm()
+{
+	KillTimer(1);
+	KillTimer(2);
+	m_SerialPort.ClosePort();
+}
+void CCommSet::OnTimer(UINT nIDEvent) 
+{
+	// TODO: Add your message handler code here and/or call default
+//	CView *view=m_pMainFram->GetActiveView();
+//	view->PostMessage(WM_TIMER);
+	switch(nIDEvent)
+	{
+		case 1:		//发送接收定时器
+		{
+			KillTimer(1);
+			if(TxRWflag==false)
+				ReadDataTimer();
+			else if(TxRWflag==true)
+				WriteDataTimer();
+			SetTimer(2,500,NULL);		//启动超时定时器
+		}break;
+		case 2:		//超时定时器
+		{
+			SetTimer(1,1,NULL);
+		}break;
+		
+	}
+	CDialog::OnTimer(nIDEvent);
+}
+void CCommSet::ReadDataTimer()
+{
+	char Rcont=m_pMainFram->m_para_info[sendval].RdContinue;
+	while(Rcont!=1)	//是否为连续可读变量
+	{
+		sendval++;
+		Rcont=m_pMainFram->m_para_info[sendval].RdContinue;
+		if(sendval>=m_pMainFram->m_para_tot_num)	//到变量总数，返回
+		{
+			sendval=0;
+			break;
+		}
+	}
+	if(Rcont==1)
+	{
+		RxIndex=0;
+		SendReadOrder(0x01,0x03,m_pMainFram->m_para_info[sendval].address,0x01);//读保存寄存器
+	}
+	TxRWflag=FALSE;
+}
+void CCommSet::WriteDataTimer()
+{
+	RxIndex=0;
+	TxRWflag=TRUE;
+}
+LONG CCommSet::OnComm(WPARAM ch, LPARAM port)
+{
+	RxBuffer[RxIndex]=ch;
+	RxIndex++;
+	int Dataunt=RxBuffer[5]+(RxBuffer[4]<<8);
+	if((RxIndex==(5+RxBuffer[2]))&&(TxRWflag==FALSE))//读命令接收到返回值
+	{
+		KillTimer(2);
+		ReadDataComm();
+	}
+	else if((TxRWflag==TRUE)&&(Dataunt=RxIndex+8))//写命令接收到返回值
+	{
+		KillTimer(2);
+		WriteDataComm();
+	}
+	return 0;
+}
+
+void CCommSet::ReadDataComm()
+{
+	unsigned int chk=RxBuffer[RxIndex-2]+(RxBuffer[RxIndex-1]<<8);
+	if(chk==crcchk(RxBuffer,(RxIndex-2)))		//CRC校验
+	{
+		for(int i=0;i<RxBuffer[2];)		//赋值
+		{
+			m_pMainFram->m_para_info[sendval].value=(RxBuffer[3+i]<<8)+RxBuffer[4+i];//高位在前
+			i+=2;
+		}
+		sendval++;
+	}
+	RxIndex=0;
+	if(sendval<=m_pMainFram->m_para_tot_num)//变量值未接收完
+		PostMessage(WM_TIMER,1);//OnTimer(1)
+	else
+	{
+		sendval=0;
+		SetTimer(1,100,NULL);
+	}
+}
+void CCommSet::WriteDataComm()
+{
+	unsigned int chk=RxBuffer[RxIndex-2]+(RxBuffer[RxIndex-1]<<8);
+	if(chk==crcchk(RxBuffer,(RxIndex-2)))		//CRC校验
+	{
+		TxRWflag==FALSE;	//确认写入完成，转为读状态
+		RxIndex=0;
+	}
+	else
+	{
+		RxIndex=0;
+		PostMessage(WM_TIMER,1);//OnTimer(1)
+	}
+}
+//读命令
+void CCommSet::SendReadOrder(int Address,int FunCode,char* StartAddress,int Length)
+{
+	BYTE  Buf[8]={'\0'};
+	Buf[0]=(BYTE)Address;		
+	Buf[1]=(BYTE)FunCode;		//功能码
+	int addr=CharToInt(StartAddress);
+	Buf[2]=(BYTE)((addr & 0xFF00)>>8);	//起始地址
+	Buf[3]=(BYTE)(addr & 0xFF);
+	Buf[4]=(BYTE)((Length & 0xFF00)>>8);	//寄存器数量
+	Buf[5]=(BYTE)(Length & 0xFF);
+	unsigned int CRC=crcchk(Buf,6);
+	Buf[6]=(BYTE)(CRC & 0xFF);
+	Buf[7]=(BYTE)((CRC & 0xFF00)>>8);		//CRC校验
+	
+	m_SerialPort.WriteToPort(Buf,8);
+}
+void CCommSet::SendWriteOrder(char* StartAddress,char* dataval)
+{
+	BYTE  Buf[11]={'\0'};
+	Buf[0]=0x01;
+	Buf[1]=0x10;
+	int addr=CharToInt(StartAddress);
+	Buf[2]=(BYTE)((addr & 0xFF00)>>8);	//起始地址
+	Buf[3]=(BYTE)(addr & 0xFF);
+	Buf[4]=0x00;
+	Buf[5]=0x01;
+	Buf[6]=0x02;
+	Buf[7]=dataval[1];
+	Buf[8]=dataval[0];
+	unsigned int CRC=crcchk(Buf,9);
+	Buf[9]=(CHAR)(CRC & 0xFF);
+	Buf[10]=(CHAR)((CRC & 0xFF00)>>8);
+	
+	m_SerialPort.WriteToPort(Buf,8);
+}
+//字符转数字
+char CCommSet::HexChar(char c)
+{
+	if((c>='0')&&(c<='9'))
+		return c-0x30;
+	else if((c>='A')&&(c<='F'))
+		return c-'A'+10;
+	else if((c>='a')&&(c<='f'))
+		return c-'a'+10;
+	else 
+		return 0x10;
+}
+
+//字符串数字转换为int
+int CCommSet::CharToInt(char* data)
+{
+	int t,t1;
+	int intdata=0;
+	int rlen=0,len=strlen(data);
+	//data.SetSize(len/2);
+	for(int i=len-1;i>=0;)
+	{
+		char l=data[i],h;
+		if(l==' ')
+		{
+			i--;
+			continue;
+		}
+		i--;
+		if(i>=0)
+			h=data[i];
+		else
+			h='0';
+		t=HexChar(h);
+		t1=HexChar(l);
+		if((t==16)||(t1==16))
+			break;
+		else 
+			t=t*16+t1;
+		i--;
+		intdata+=t*pow(0x100,rlen); //int
+		//data[rlen]=(char)t;
+		rlen++;
+	}
+	return intdata;
+}
+//////////////////////////////////////////////////////////
+					/*CRC校验*/
+//////////////////////////////////////////////////////////
+unsigned int CCommSet::crcchk(unsigned char *data_ad,unsigned int length)
+{
+	int i,j; unsigned int crcsum; 
+	crcsum=0xFFFF;
+	for(i=0;i<length;i++)
+	{
+		crcsum^=*data_ad++;
+		for(j=0;j<8;j++)
+		{
+			if((crcsum&1)==1)
+				crcsum=(crcsum>>1) ^ 0xA001;
+			else 
+				crcsum=(crcsum>>1);
+		}
+	}
+	return crcsum;
+}
+void CCommSet::OnOK() 
+{
+	// TODO: Add extra validation here
+	m_SerialPort.ClosePort();
+	InitComm();
+	CDialog::OnOK();
+}
